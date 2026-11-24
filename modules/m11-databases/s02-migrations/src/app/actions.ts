@@ -2,7 +2,14 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { createTask, createUser, deleteTask, toggleTask } from '@/db/queries'
+import {
+  createProject,
+  createTask,
+  createUser,
+  deleteProject,
+  deleteTask,
+  toggleTask,
+} from '@/db/queries'
 
 export interface FormState {
   error?: string
@@ -27,12 +34,35 @@ export async function addUser(
   return {}
 }
 
+const ProjectSchema = z.object({
+  name: z.string().trim().min(1, 'Enter a project name').max(60),
+})
+
+export async function addProject(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const input = ProjectSchema.safeParse(Object.fromEntries(formData))
+  if (!input.success) return { error: input.error.issues[0].message }
+
+  const result = await createProject(input.data.name)
+  if (!result.ok) return { error: result.error }
+
+  revalidatePath('/')
+  return {}
+}
+
 const TaskSchema = z.object({
   title: z.string().trim().min(1, 'Enter a title').max(200),
   userId: z.coerce
     .number({ error: 'Choose a person' })
     .int()
     .positive('Choose a person'),
+  projectId: z.preprocess(
+    (v) => (v === '' ? null : v),
+    z.coerce.number().int().positive().nullable(),
+  ),
+  priority: z.coerce.number().int().min(1).max(3),
 })
 
 export async function addTask(
@@ -60,5 +90,12 @@ export async function deleteTaskAction(formData: FormData) {
   const id = IdSchema.safeParse(formData.get('id'))
   if (!id.success) return
   await deleteTask(id.data)
+  revalidatePath('/')
+}
+
+export async function deleteProjectAction(formData: FormData) {
+  const id = IdSchema.safeParse(formData.get('id'))
+  if (!id.success) return
+  await deleteProject(id.data)
   revalidatePath('/')
 }

@@ -1,24 +1,33 @@
 import 'server-only'
-import { DrizzleQueryError, asc, desc, eq, not } from 'drizzle-orm'
+import { DrizzleQueryError, asc, eq, not } from 'drizzle-orm'
 import { db } from './index'
-import { tasks, users, type NewTask } from './schema'
+import { projects, tasks, users, type NewTask } from './schema'
 
 export function listUsers() {
   return db.select().from(users).orderBy(asc(users.name))
 }
 
-export function listTasks() {
-  return db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      done: tasks.done,
-      owner: users.name,
-    })
-    .from(tasks)
-    .innerJoin(users, eq(tasks.userId, users.id))
-    .orderBy(desc(tasks.id))
+export function listProjects() {
+  return db.query.projects.findMany({
+    orderBy: (p, { asc }) => [asc(p.name)],
+    with: {
+      tasks: {
+        orderBy: (t, { asc, desc }) => [asc(t.priority), desc(t.id)],
+        with: { user: { columns: { name: true } } },
+      },
+    },
+  })
 }
+
+export function listTasksWithoutProject() {
+  return db.query.tasks.findMany({
+    where: (t, { isNull }) => isNull(t.projectId),
+    orderBy: (t, { asc, desc }) => [asc(t.priority), desc(t.id)],
+    with: { user: { columns: { name: true } } },
+  })
+}
+
+export type TaskWithOwner = Awaited<ReturnType<typeof listTasksWithoutProject>>[number]
 
 function isUniqueViolation(err: unknown) {
   if (!(err instanceof DrizzleQueryError)) return false
@@ -36,6 +45,22 @@ export async function createUser(name: string, email: string) {
     }
     throw err
   }
+}
+
+export async function createProject(name: string) {
+  try {
+    const [project] = await db.insert(projects).values({ name }).returning()
+    return { ok: true as const, project }
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return { ok: false as const, error: 'That project already exists' }
+    }
+    throw err
+  }
+}
+
+export async function deleteProject(id: number) {
+  await db.delete(projects).where(eq(projects.id, id))
 }
 
 export async function createTask(task: NewTask) {
